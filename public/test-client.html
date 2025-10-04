@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excalidraw Server Test Client</title>
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .status {
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            font-weight: bold;
+        }
+        .connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+        .section h3 {
+            margin-top: 0;
+            color: #667eea;
+        }
+        input, button {
+            padding: 10px 15px;
+            margin: 5px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            font-size: 14px;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        #log {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            margin-top: 20px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 3px 0;
+        }
+        .log-info { color: #00ff00; }
+        .log-error { color: #ff6b6b; }
+        .log-event { color: #4ecdc4; }
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .flex-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 Excalidraw Server Test Client</h1>
+        <p class="subtitle">Test the collaboration server functionality</p>
+        
+        <div id="status" class="status disconnected">
+            ⚠️ Disconnected - Click Connect to start
+        </div>
+
+        <div class="info-box">
+            <strong>ℹ️ Socket ID:</strong> <span id="socketId">Not connected</span>
+        </div>
+
+        <div class="section">
+            <h3>🔌 Connection</h3>
+            <div class="flex-row">
+                <input type="text" id="serverUrl" value="http://localhost:3002" style="flex: 1;" placeholder="Server URL">
+                <button onclick="connect()">Connect</button>
+                <button onclick="disconnect()">Disconnect</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>🚪 Room Management</h3>
+            <div class="flex-row">
+                <input type="text" id="roomId" placeholder="Enter Room ID (e.g., test-room-123)" style="flex: 1;">
+                <button onclick="joinRoom()">Join Room</button>
+            </div>
+            <p style="color: #666; font-size: 12px; margin-top: 10px;">
+                💡 Tip: Open this page in multiple tabs/browsers with the same room ID to test collaboration
+            </p>
+        </div>
+
+        <div class="section">
+            <h3>📡 Broadcasting</h3>
+            <div class="flex-row">
+                <input type="text" id="message" placeholder="Test message" style="flex: 1;">
+                <button onclick="sendBroadcast()">Send Broadcast</button>
+                <button onclick="sendVolatileBroadcast()">Send Volatile</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>👥 User Following</h3>
+            <div class="flex-row">
+                <input type="text" id="userToFollow" placeholder="Socket ID to follow" style="flex: 1;">
+                <input type="text" id="username" placeholder="Username" value="TestUser">
+                <button onclick="followUser()">Follow</button>
+                <button onclick="unfollowUser()">Unfollow</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>📝 Event Log</h3>
+            <button onclick="clearLog()">Clear Log</button>
+            <div id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        let currentRoom = null;
+
+        function addLog(message, type = 'info') {
+            const log = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${timestamp}] ${message}`;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function updateStatus(connected) {
+            const status = document.getElementById('status');
+            if (connected) {
+                status.className = 'status connected';
+                status.textContent = '✅ Connected to server';
+            } else {
+                status.className = 'status disconnected';
+                status.textContent = '⚠️ Disconnected';
+            }
+        }
+
+        function connect() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            addLog(`Connecting to ${serverUrl}...`, 'info');
+            
+            socket = io(serverUrl, {
+                transports: ['websocket', 'polling']
+            });
+
+            socket.on('connect', () => {
+                addLog('✅ Connected successfully!', 'info');
+                addLog(`Socket ID: ${socket.id}`, 'info');
+                document.getElementById('socketId').textContent = socket.id;
+                updateStatus(true);
+            });
+
+            socket.on('disconnect', (reason) => {
+                addLog(`❌ Disconnected: ${reason}`, 'error');
+                updateStatus(false);
+                document.getElementById('socketId').textContent = 'Not connected';
+            });
+
+            socket.on('init-room', () => {
+                addLog('📨 Received: init-room', 'event');
+            });
+
+            socket.on('first-in-room', () => {
+                addLog('🎉 You are the first user in this room!', 'event');
+            });
+
+            socket.on('new-user', (socketId) => {
+                addLog(`👤 New user joined: ${socketId}`, 'event');
+            });
+
+            socket.on('room-user-change', (users) => {
+                addLog(`👥 Room users updated: ${users.length} user(s) - [${users.join(', ')}]`, 'event');
+            });
+
+            socket.on('client-broadcast', (data, iv) => {
+                addLog(`📡 Received broadcast from another user (${data.byteLength} bytes)`, 'event');
+            });
+
+            socket.on('user-follow-room-change', (followedBy) => {
+                addLog(`👁️ Followers updated: ${followedBy.length} follower(s)`, 'event');
+            });
+
+            socket.on('broadcast-unfollow', () => {
+                addLog('👁️ All followers have left', 'event');
+            });
+
+            socket.on('connect_error', (error) => {
+                addLog(`❌ Connection error: ${error.message}`, 'error');
+            });
+        }
+
+        function disconnect() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+                addLog('Disconnected manually', 'info');
+                updateStatus(false);
+            }
+        }
+
+        function joinRoom() {
+            const roomId = document.getElementById('roomId').value;
+            if (!socket || !socket.connected) {
+                addLog('❌ Not connected to server!', 'error');
+                return;
+            }
+            if (!roomId) {
+                addLog('❌ Please enter a room ID', 'error');
+                return;
+            }
+            currentRoom = roomId;
+            socket.emit('join-room', roomId);
+            addLog(`🚪 Joining room: ${roomId}`, 'info');
+        }
+
+        function sendBroadcast() {
+            if (!socket || !socket.connected) {
+                addLog('❌ Not connected to server!', 'error');
+                return;
+            }
+            if (!currentRoom) {
+                addLog('❌ Not in a room! Join a room first.', 'error');
+                return;
+            }
+            const message = document.getElementById('message').value || 'Test message';
+            // Simulate encrypted data
+            const encoder = new TextEncoder();
+            const data = encoder.encode(message);
+            const iv = new Uint8Array(16); // Mock IV
+            socket.emit('server-broadcast', currentRoom, data.buffer, iv);
+            addLog(`📤 Sent broadcast to room ${currentRoom}: "${message}"`, 'info');
+        }
+
+        function sendVolatileBroadcast() {
+            if (!socket || !socket.connected) {
+                addLog('❌ Not connected to server!', 'error');
+                return;
+            }
+            if (!currentRoom) {
+                addLog('❌ Not in a room! Join a room first.', 'error');
+                return;
+            }
+            const message = document.getElementById('message').value || 'Volatile test';
+            const encoder = new TextEncoder();
+            const data = encoder.encode(message);
+            const iv = new Uint8Array(16);
+            socket.emit('server-volatile-broadcast', currentRoom, data.buffer, iv);
+            addLog(`📤 Sent volatile broadcast to room ${currentRoom}: "${message}"`, 'info');
+        }
+
+        function followUser() {
+            if (!socket || !socket.connected) {
+                addLog('❌ Not connected to server!', 'error');
+                return;
+            }
+            const userToFollow = document.getElementById('userToFollow').value;
+            const username = document.getElementById('username').value;
+            if (!userToFollow) {
+                addLog('❌ Please enter a socket ID to follow', 'error');
+                return;
+            }
+            socket.emit('user-follow', {
+                userToFollow: { socketId: userToFollow, username: username },
+                action: 'FOLLOW'
+            });
+            addLog(`👁️ Following user: ${userToFollow}`, 'info');
+        }
+
+        function unfollowUser() {
+            if (!socket || !socket.connected) {
+                addLog('❌ Not connected to server!', 'error');
+                return;
+            }
+            const userToFollow = document.getElementById('userToFollow').value;
+            const username = document.getElementById('username').value;
+            if (!userToFollow) {
+                addLog('❌ Please enter a socket ID to unfollow', 'error');
+                return;
+            }
+            socket.emit('user-follow', {
+                userToFollow: { socketId: userToFollow, username: username },
+                action: 'UNFOLLOW'
+            });
+            addLog(`👁️ Unfollowing user: ${userToFollow}`, 'info');
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        // Initial log message
+        addLog('🎨 Excalidraw Test Client Ready!', 'info');
+        addLog('Click "Connect" to start testing', 'info');
+    </script>
+</body>
+</html>
